@@ -13,15 +13,23 @@
   } while (0)
 
 __global__ void kernel1(unsigned long long clock_count, int *x) {
-  unsigned long long start = clock64();
-  printf("Kernel 1 running on stream1\n");
-  while (clock64() - start < clock_count);
-  printf("Kernel 1 (after busy wait): x=%d\n", *x);
-  *x += 1;
+    unsigned long long start = clock64();
+    printf("Kernel 1 running on stream1\n");
+    while (clock64() - start < clock_count);
+    printf("Kernel 1 (after busy wait): x=%d\n", *x);
+    if (*x == 0) //Kernel 2 finished before 1
+      return;
+    *x = 1;
 }
 
 __global__ void kernel2(int *x) { 
     printf("Kernel 2 (before exec): x=%d\n", *x);
+    // means that kernel 1 finished first
+    if (*x == 1){
+//      printf("Kernel 2 x=1. So kernel 1 finished. Return\n");
+      return;
+    }
+//    printf("Kernel 2 x=%d. So kernel 1 not finished.\n", *x);
     *x = 0; 
   }
 
@@ -52,6 +60,7 @@ int main(int argc, char **argv) {
   CHECK_CUDA(cudaStreamBeginCapture(stream1, cudaStreamCaptureModeGlobal));
   kernel1<<<1, 1, 0, stream1>>>(clocks, d);
   CHECK_CUDA(cudaEventRecordWithFlags(extEvent, stream1, cudaEventRecordExternal));
+
   CHECK_CUDA(cudaStreamEndCapture(stream1, &graph));
   // END capture 1
 
@@ -76,6 +85,19 @@ int main(int argc, char **argv) {
 
   CHECK_CUDA(cudaStreamSynchronize(stream1));
   CHECK_CUDA(cudaStreamSynchronize(stream2));
+  int result = -1;
+  CHECK_CUDA(cudaMemcpy(&result, d, sizeof(int), cudaMemcpyDeviceToHost));
+  if (useExternalWait){
+    if (result == 1)
+      std::cout <<"Correct output!!"<<std::endl;
+    else
+      std::cout<<" Wrong output: "<<result<<". Expected 1."<<std::endl;
+  } else{
+    if (result == 0)
+      std::cout << "Correct output!!" << std::endl;
+    else
+      std::cout << "Wrong output: " << result << ". Expected 0." << std::endl;
+  }
 
   // Cleanup
   CHECK_CUDA(cudaGraphExecDestroy(graphExec));
